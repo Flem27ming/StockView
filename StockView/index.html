@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <title>Mine Udvalgte Live Aktier</title>
+    <style>
+        /* Sætter en flot, mørk baggrund og fjerner scrollbars */
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #0b0e14;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+        /* Grid-system der automatisk fordeler kasserne pænt ud på skærmen */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1600px;
+        }
+        /* Designet af de store farvede firkanter */
+        .box {
+            padding: 50px 20px;
+            border-radius: 16px;
+            text-align: center;
+            font-weight: bold;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+            transition: background-color 0.4s ease, transform 0.2s;
+        }
+
+            .box:hover {
+                transform: scale(1.02);
+            }
+        /* Farver baseret på markedsretning */
+        .neutral {
+            background-color: #1f242e;
+            border: 2px solid #363c4e;
+        }
+
+        .up {
+            background-color: #0f7a3e;
+            border: 2px solid #1db954;
+        }
+        /* Lysende Grøn */
+        .down {
+            background-color: #b71c1c;
+            border: 2px solid #ff5252;
+        }
+        /* Lysende Rød */
+
+        /* Tekststørrelser i kasserne */
+        .ticker {
+            font-size: 3.5rem;
+            margin-bottom: 5px;
+            letter-spacing: 2px;
+        }
+
+        .price {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .percent {
+            font-size: 1.8rem;
+            opacity: 0.95;
+            background: rgba(0,0,0,0.15);
+            padding: 4px 12px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+
+        .wrap {
+            width: 100%;
+            max-width: 1600px;
+        }
+
+        .status {
+            margin-top: 18px;
+            text-align: center;
+            font-size: 0.95rem;
+            color: #8b93a7;
+        }
+
+            .status.fejl {
+                color: #ffb74d;
+            }
+    </style>
+</head>
+<body>
+
+    <div class="wrap">
+        <div class="grid" id="dashboard"></div>
+        <div class="status" id="status">Henter live-data fra markedet...</div>
+    </div>
+
+    <script>// Dine valgte aktier til skærm nummer to
+        const mineAktier = ['HELP', 'CMPS', 'MARA', 'MRNA', 'SMMT', 'ORKA', 'AMD'];
+
+        // 1) Den lokale StockView-server (start.bat) henter kurserne direkte fra Yahoo - mest stabil.
+        // 2) Kører den ikke, prøves gratis CORS-proxyer (kan være langsomme eller nede).
+        const lokalServer = location.port === '8765' ? '' : 'http://localhost:8765';
+        const proxyer = [
+            url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+            url => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url),
+        ];
+        const senesteKurser = {};   // beholder sidste kendte kurs, så kasserne ikke blinker tilbage
+        let senestOpdateret = null;
+        let kilde = '';
+        let igang = false;
+
+        function hentMedTimeout(url, ms) {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), ms);
+            return fetch(url, { signal: ctrl.signal, cache: 'no-store' }).finally(() => clearTimeout(t));
+        }
+
+        async function fraLokalServer() {
+            const res = await hentMedTimeout(`${lokalServer}/api/quotes?symbols=${mineAktier.join(',')}`, 8000);
+            if (!res.ok) throw new Error('server ' + res.status);
+            const liste = await res.json();
+            liste.forEach(q => { if (q.price != null) senesteKurser[q.symbol] = q; });
+            kilde = 'lokal server';
+        }
+
+        async function fraProxy(ticker) {
+            const yahoo = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=1d&interval=1m`;
+            for (const proxy of proxyer) {
+                try {
+                    const res = await hentMedTimeout(proxy(yahoo), 10000);
+                    const meta = (await res.json()).chart.result[0].meta;
+                    return { symbol: ticker, price: meta.regularMarketPrice,
+                             previousClose: meta.previousClose ?? meta.chartPreviousClose };
+                } catch (e) { /* prøv næste proxy */ }
+            }
+            throw new Error('ingen proxy svarede');
+        }
+
+        async function fraProxyer() {
+            const svar = await Promise.allSettled(mineAktier.map(fraProxy));
+            svar.forEach(s => { if (s.status === 'fulfilled') senesteKurser[s.value.symbol] = s.value; });
+            if (!svar.some(s => s.status === 'fulfilled')) throw new Error('ingen data');
+            kilde = 'offentlig proxy';
+        }
+
+        function tegn() {
+            let html = '';
+            for (const ticker of mineAktier) {
+                const q = senesteKurser[ticker];
+                if (!q) {
+                    html += `<div class="box neutral"><div class="ticker">${ticker}</div>
+                             <div class="price">Henter data...</div><div class="percent">Live</div></div>`;
+                    continue;
+                }
+                const procent = q.previousClose ? ((q.price - q.previousClose) / q.previousClose) * 100 : 0;
+                const klasse = procent > 0 ? 'up' : procent < 0 ? 'down' : 'neutral';
+                html += `<div class="box ${klasse}"><div class="ticker">${ticker}</div>
+                         <div class="price">$${q.price.toFixed(2)}</div>
+                         <div class="percent">${procent >= 0 ? '+' : ''}${procent.toFixed(2)}%</div></div>`;
+            }
+            document.getElementById('dashboard').innerHTML = html;
+        }
+
+        async function hentKurser() {
+            if (igang) return;   // undgå at kald hober sig op, hvis et svar er langsomt
+            igang = true;
+            const status = document.getElementById('status');
+            try {
+                try { await fraLokalServer(); } catch (e) { await fraProxyer(); }
+                senestOpdateret = new Date();
+                status.textContent = `Live · opdateret ${senestOpdateret.toLocaleTimeString('da-DK')} · kilde: ${kilde}`;
+                status.className = 'status';
+            } catch (e) {
+                status.textContent = (senestOpdateret
+                    ? `Kunne ikke opdatere – viser kurser fra ${senestOpdateret.toLocaleTimeString('da-DK')}. `
+                    : 'Kan ikke hente kurser. ') + 'Start start.bat i StockView-mappen for stabile live-kurser.';
+                status.className = 'status fejl';
+            }
+            tegn();
+            igang = false;
+        }
+
+        // Starter med det samme og opdaterer automatisk hvert 5. sekund
+        tegn();
+        hentKurser();
+        setInterval(hentKurser, 5000);</script>
+</body>
+</html>
