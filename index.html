@@ -98,8 +98,13 @@
     <script>// Dine valgte aktier til skærm nummer to
         const mineAktier = ['HELP', 'CMPS', 'MARA', 'MRNA', 'SMMT', 'ORKA', 'AMD'];
 
-        // 1) Den lokale StockView-server (start.bat) henter kurserne direkte fra Yahoo - mest stabil.
-        // 2) Kører den ikke, prøves gratis CORS-proxyer (kan være langsomme eller nede).
+        // Dit Cloudflare-link (bruges på telefonen / GitHub Pages). Indsæt det mellem anførselstegnene.
+        const CLOUDFLARE_URL = 'https://stockview.flem27ming.workers.dev';
+
+        // 1) Cloudflare-relæet henter kurserne fra nasdaq.com - virker overalt, også på telefonen.
+        // 2) Den lokale StockView-server (start.bat) - kun når siden åbnes på denne computer.
+        // 3) Gratis CORS-proxyer som sidste udvej (kan være langsomme eller nede).
+        const paaComputeren = location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname);
         const lokalServer = location.port === '8765' ? '' : 'http://localhost:8765';
         const proxyer = [
             url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
@@ -116,12 +121,23 @@
             return fetch(url, { signal: ctrl.signal, cache: 'no-store' }).finally(() => clearTimeout(t));
         }
 
+        async function fraRelae(url, navn) {
+            const res = await hentMedTimeout(url, 8000);
+            if (!res.ok) throw new Error(navn + ' ' + res.status);
+            const liste = (await res.json()).filter(q => q.price != null);
+            if (!liste.length) throw new Error(navn + ': ingen data');
+            liste.forEach(q => { senesteKurser[q.symbol] = q; });
+            kilde = navn + (liste[0].source ? ` (${liste[0].source})` : '');
+        }
+
+        async function fraCloudflare() {
+            if (!CLOUDFLARE_URL) throw new Error('intet Cloudflare-link');
+            await fraRelae(`${CLOUDFLARE_URL.replace(/\/$/, '')}/?symbols=${mineAktier.join(',')}`, 'Cloudflare');
+        }
+
         async function fraLokalServer() {
-            const res = await hentMedTimeout(`${lokalServer}/api/quotes?symbols=${mineAktier.join(',')}`, 8000);
-            if (!res.ok) throw new Error('server ' + res.status);
-            const liste = await res.json();
-            liste.forEach(q => { if (q.price != null) senesteKurser[q.symbol] = q; });
-            kilde = 'lokal server';
+            if (!paaComputeren) throw new Error('ikke på computeren');
+            await fraRelae(`${lokalServer}/api/quotes?symbols=${mineAktier.join(',')}`, 'lokal server');
         }
 
         async function fraProxy(ticker) {
@@ -167,14 +183,17 @@
             igang = true;
             const status = document.getElementById('status');
             try {
-                try { await fraLokalServer(); } catch (e) { await fraProxyer(); }
+                try { await fraCloudflare(); }
+                catch (e1) { try { await fraLokalServer(); } catch (e2) { await fraProxyer(); } }
                 senestOpdateret = new Date();
                 status.textContent = `Live · opdateret ${senestOpdateret.toLocaleTimeString('da-DK')} · kilde: ${kilde}`;
                 status.className = 'status';
             } catch (e) {
                 status.textContent = (senestOpdateret
                     ? `Kunne ikke opdatere – viser kurser fra ${senestOpdateret.toLocaleTimeString('da-DK')}. `
-                    : 'Kan ikke hente kurser. ') + 'Start start.bat i StockView-mappen for stabile live-kurser.';
+                    : 'Kan ikke hente kurser. ') + (CLOUDFLARE_URL
+                        ? 'Cloudflare-relæet svarer ikke.'
+                        : 'Indsæt dit Cloudflare-link i CLOUDFLARE_URL i index.html.');
                 status.className = 'status fejl';
             }
             tegn();
