@@ -122,6 +122,42 @@
                 width: 100%;
             }
 
+        /* Telefon: små kasser i 2 kolonner, så alle aktier kan ses på én gang */
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+
+            .grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+
+            .box {
+                padding: 16px 6px;
+            }
+
+            .ticker {
+                font-size: 1.6rem;
+                letter-spacing: 1px;
+                margin-bottom: 2px;
+            }
+
+            .price {
+                font-size: 1.3rem;
+                margin-bottom: 6px;
+            }
+
+            .percent {
+                font-size: 1rem;
+                padding: 2px 8px;
+            }
+
+            #tape {
+                margin-top: 10px;
+            }
+        }
+
         .tilbage {
             display: block;
             margin-bottom: 15px;
